@@ -1,0 +1,22 @@
+SentinelOps {{ .Chart.AppVersion }} deployed to namespace "{{ .Release.Namespace }}".
+
+  Dashboard : http://{{ include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.dashboard) }}:{{ .Values.gateway.nodePort }}
+  Ingest API: http://{{ include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.ingest) }}:{{ .Values.gateway.nodePort }}/v1/events   (header: X-API-Key)
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} get pods
+  kubectl -n {{ .Release.Namespace }} logs -f deploy/{{ include "sentinelops.fullname" . }}-processor
+
+Send a test event:
+  curl -X POST http://{{ include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.ingest) }}:{{ .Values.gateway.nodePort }}/v1/events \
+    -H "X-API-Key: <your key>" -H "Content-Type: application/json" \
+    -d '{"events":[{"service":"demo","level":"error","status_code":503,"latency_ms":900,"message":"boom"}]}'
+{{- if .Values.elk.enabled }}
+
+ELK is ENABLED. Kibana is not exposed publicly (no auth); open it with:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "sentinelops.fullname" . }}-kibana 5601:5601
+  -> http://localhost:5601  (Data view "SentinelOps Logs" is created automatically)
+{{- else }}
+
+ELK is disabled. Enable it with:  helm upgrade {{ .Release.Name }} <chart> -n {{ .Release.Namespace }} --reuse-values --set elk.enabled=true
+{{- end }}

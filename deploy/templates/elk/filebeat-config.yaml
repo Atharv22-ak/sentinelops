@@ -1,0 +1,38 @@
+{{- if .Values.elk.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ctx := dict "root" . "component" "filebeat" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-filebeat
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+data:
+  filebeat.yml: |
+    filebeat.inputs:
+      - type: filestream
+        id: sentinelops-containers
+        paths:
+          - /var/log/containers/*_{{ .Release.Namespace }}_*.log
+        prospector.scanner.symlinks: true
+        parsers:
+          - container: ~
+    processors:
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchers:
+            - logs_path:
+                logs_path: "/var/log/containers/"
+      # do not ship the logging stack's own logs (avoids feedback loops)
+      - drop_event:
+          when:
+            or:
+              - equals: {kubernetes.container.name: elasticsearch}
+              - equals: {kubernetes.container.name: logstash}
+              - equals: {kubernetes.container.name: kibana}
+              - equals: {kubernetes.container.name: filebeat}
+              - equals: {kubernetes.container.name: sysctl}
+    output.logstash:
+      hosts: ["{{ $full }}-logstash:5044"]
+    logging.level: warning
+{{- end }}

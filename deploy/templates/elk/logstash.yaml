@@ -1,0 +1,62 @@
+{{- if .Values.elk.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ctx := dict "root" . "component" "logstash" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-logstash
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  selector:
+    {{- include "sentinelops.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - {name: beats, port: 5044}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}-logstash
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sentinelops.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentinelops.labels" $ctx | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/elk/logstash-config.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: logstash
+          image: docker.elastic.co/logstash/logstash:{{ .Values.elk.version }}
+          ports:
+            - {name: beats, containerPort: 5044}
+          env:
+            - {name: LS_JAVA_OPTS, value: "-Xms{{ .Values.elk.logstash.heap }} -Xmx{{ .Values.elk.logstash.heap }}"}
+          readinessProbe:
+            tcpSocket: {port: beats}
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket: {port: beats}
+            initialDelaySeconds: 180
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.elk.logstash.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /usr/share/logstash/config/logstash.yml, subPath: logstash.yml}
+            - {name: config, mountPath: /usr/share/logstash/pipeline/logstash.conf, subPath: logstash.conf}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $full }}-logstash
+{{- end }}

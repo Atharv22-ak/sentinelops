@@ -1,0 +1,48 @@
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ctx := dict "root" . "component" "redis" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-redis
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  selector:
+    {{- include "sentinelops.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - {name: redis, port: 6379}
+---
+# Redis holds only rebuildable state (rate limits, sliding windows, baselines, caches), so no persistence.
+# volatile-lru evicts only keys that have a TTL (buckets/caches) and never the detector baselines.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}-redis
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sentinelops.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentinelops.labels" $ctx | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: redis
+          image: {{ .Values.redis.image }}
+          args: ["--save", "", "--appendonly", "no", "--maxmemory", "{{ .Values.redis.maxMemory }}", "--maxmemory-policy", "volatile-lru"]
+          ports:
+            - {name: redis, containerPort: 6379}
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            periodSeconds: 10
+          livenessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}

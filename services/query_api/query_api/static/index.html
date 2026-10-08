@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SentinelOps</title>
+<style>
+:root{--bg:#0f1419;--card:#1a212b;--text:#e6edf3;--muted:#8b98a5;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--line:#2d3744}
+*{box-sizing:border-box}body{margin:0;font:14px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--text)}
+header{padding:16px 24px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+h1{font-size:18px;margin:0}main{padding:24px;display:grid;gap:16px;max-width:1200px;margin:auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;overflow-x:auto}
+.big{font-size:28px;font-weight:600}.muted{color:var(--muted)}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
+.pill{padding:2px 8px;border-radius:999px;font-size:12px}.ok{background:#1f3d2a;color:var(--ok)}
+.bad{background:#4a1d1b;color:var(--bad)}.warn{background:#41330f;color:var(--warn)}
+button{background:var(--line);color:var(--text);border:0;border-radius:6px;padding:4px 10px;cursor:pointer;margin-right:4px}
+svg{width:100%;height:140px}
+</style></head><body>
+<header><h1>SentinelOps</h1><span class="muted" id="updated">loading…</span></header>
+<main>
+ <div class="cards">
+  <div class="card"><div class="muted">Services (5 min)</div><div class="big" id="k-services">–</div></div>
+  <div class="card"><div class="muted">Events (5 min)</div><div class="big" id="k-events">–</div></div>
+  <div class="card"><div class="muted">Error rate</div><div class="big" id="k-err">–</div></div>
+  <div class="card"><div class="muted">Open incidents</div><div class="big" id="k-inc">–</div></div>
+ </div>
+ <div class="card"><div class="muted">Events / min (blue) and errors / min (red), last 30 min</div><svg id="chart" viewBox="0 0 600 140" preserveAspectRatio="none"></svg></div>
+ <div class="card"><h3>Services</h3><table><thead><tr><th>Service</th><th>Events</th><th>Error rate</th><th>Avg ms</th><th>p95 ms</th><th>Status</th></tr></thead><tbody id="services"></tbody></table></div>
+ <div class="card"><h3>Incidents</h3><table><thead><tr><th>Opened</th><th>Service</th><th>Kind</th><th>Severity</th><th>Status</th><th>Count</th><th></th></tr></thead><tbody id="incidents"></tbody></table></div>
+</main>
+<script>
+const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const get=u=>fetch(u).then(r=>r.json());
+async function act(id,a){await fetch(`/v1/incidents/${id}/${a}`,{method:'POST',headers:{'content-type':'application/json'},body:'{}'});refresh()}
+function chart(rows){const w=600,h=140;if(!rows.length){$('chart').innerHTML='';return}
+ const max=Math.max(...rows.map(r=>r.events),1),x=i=>i*(w/Math.max(rows.length-1,1)),y=v=>h-4-(v/max)*(h-12);
+ const line=(k,c)=>`<polyline fill="none" stroke="${c}" stroke-width="2" points="${rows.map((r,i)=>x(i)+','+y(r[k])).join(' ')}"/>`;
+ $('chart').innerHTML=line('events','#58a6ff')+line('errors','#f85149')}
+async function refresh(){try{
+ const [svcs,inc,ts]=await Promise.all([get('/v1/services'),get('/v1/incidents?limit=15'),get('/v1/stats/timeseries?minutes=30')]);
+ const ev=svcs.reduce((a,s)=>a+s.events,0),er=svcs.reduce((a,s)=>a+s.errors,0),open=inc.filter(i=>i.status!=='resolved').length;
+ $('k-services').textContent=svcs.length;$('k-events').textContent=ev;$('k-err').textContent=ev?(er/ev*100).toFixed(1)+'%':'0%';$('k-inc').textContent=open;
+ $('services').innerHTML=svcs.map(s=>{const c=s.error_rate>=.2?'bad':s.error_rate>=.05?'warn':'ok';
+  return `<tr><td>${esc(s.service)}</td><td>${s.events}</td><td>${(s.error_rate*100).toFixed(1)}%</td><td>${s.avg_latency_ms??'-'}</td><td>${s.p95_latency_ms??'-'}</td><td><span class="pill ${c}">${c==='ok'?'healthy':c==='warn'?'degraded':'failing'}</span></td></tr>`}).join('');
+ $('incidents').innerHTML=inc.map(i=>`<tr><td>${new Date(i.opened_at).toLocaleTimeString()}</td><td>${esc(i.service)}</td><td title="${esc(i.summary)}">${esc(i.kind)}</td><td><span class="pill ${i.severity==='critical'||i.severity==='high'?'bad':'warn'}">${esc(i.severity)}</span></td><td>${esc(i.status)}</td><td>${i.occurrences}</td><td>${i.status==='open'?`<button onclick="act('${i.id}','ack')">Ack</button>`:''}${i.status!=='resolved'?`<button onclick="act('${i.id}','resolve')">Resolve</button>`:''}</td></tr>`).join('')||'<tr><td colspan=7 class="muted">No incidents</td></tr>';
+ chart(ts);$('updated').textContent='updated '+new Date().toLocaleTimeString()}catch(e){$('updated').textContent='error: '+e}}
+refresh();setInterval(refresh,5000);
+</script></body></html>

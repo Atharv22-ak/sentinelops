@@ -1,0 +1,36 @@
+{{- $full := include "sentinelops.fullname" . }}
+{{- if .Values.ingestApi.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $full }}-ingest-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $full }}-ingest-api
+  minReplicas: {{ .Values.ingestApi.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.ingestApi.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.ingestApi.autoscaling.targetCPUUtilizationPercentage }}
+---
+{{- end }}
+{{- range $comp, $cfg := dict "ingest-api" .Values.ingestApi "processor" .Values.processor }}
+{{- if gt (int $cfg.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $full }}-{{ $comp }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "sentinelops.selectorLabels" (dict "root" $ "component" $comp) | nindent 6 }}
+---
+{{- end }}
+{{- end }}

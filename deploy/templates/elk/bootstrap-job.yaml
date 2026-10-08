@@ -1,0 +1,66 @@
+{{- if .Values.elk.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ctx := dict "root" . "component" "elk-bootstrap" }}
+# Post-install/upgrade hook: ILM retention policy, index template and a pre-created Kibana data view.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-elk-bootstrap
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+data:
+  bootstrap.sh: |
+    #!/bin/sh
+    set -eu
+    ES="http://{{ $full }}-elasticsearch:9200"
+    KB="http://{{ $full }}-kibana:5601"
+    wait_for() { until curl -fsS "$1" >/dev/null 2>&1; do echo "waiting for $1"; sleep 5; done; }
+    JSON='Content-Type: application/json'
+
+    wait_for "$ES/_cluster/health"
+    curl -fsS -X PUT "$ES/_ilm/policy/sentinelops-logs" -H "$JSON" \
+      -d '{"policy":{"phases":{"delete":{"min_age":"{{ .Values.elk.retentionDays }}d","actions":{"delete":{}}}}}}'
+    echo
+    curl -fsS -X PUT "$ES/_index_template/sentinelops-logs" -H "$JSON" \
+      -d '{"index_patterns":["sentinelops-logs-*"],"priority":200,"template":{"settings":{"number_of_shards":1,"number_of_replicas":0,"index.lifecycle.name":"sentinelops-logs"}}}'
+    echo
+    wait_for "$KB/api/status"
+    # 400 "duplicate" on re-runs is fine
+    curl -sS -X POST "$KB/api/data_views/data_view" -H "$JSON" -H 'kbn-xsrf: true' \
+      -d '{"data_view":{"id":"sentinelops-logs","title":"sentinelops-logs-*","name":"SentinelOps Logs","timeFieldName":"@timestamp"}}' || true
+    echo
+    echo "ELK bootstrap complete"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $full }}-elk-bootstrap
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "sentinelops.labels" $ctx | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      containers:
+        - name: bootstrap
+          image: curlimages/curl:8.7.1
+          command: ["/bin/sh", "/scripts/bootstrap.sh"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: scripts, mountPath: /scripts}
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ $full }}-elk-bootstrap
+{{- end }}

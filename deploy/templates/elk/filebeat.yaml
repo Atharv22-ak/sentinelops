@@ -1,0 +1,82 @@
+{{- if .Values.elk.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ctx := dict "root" . "component" "filebeat" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $full }}-filebeat
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $full }}-{{ .Release.Namespace }}-filebeat
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, pods, nodes]
+    verbs: [get, list, watch]
+  - apiGroups: ["apps"]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $full }}-{{ .Release.Namespace }}-filebeat
+subjects:
+  - kind: ServiceAccount
+    name: {{ $full }}-filebeat
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: {{ $full }}-{{ .Release.Namespace }}-filebeat
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $full }}-filebeat
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "sentinelops.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentinelops.labels" $ctx | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/elk/filebeat-config.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ $full }}-filebeat
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: filebeat
+          image: docker.elastic.co/beats/filebeat:{{ .Values.elk.version }}
+          args: ["-e", "-c", "/etc/filebeat.yml", "--strict.perms=false"]
+          securityContext:
+            runAsUser: 0      # needed to read /var/log/pods on the node (read-only mount)
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            {{- toYaml .Values.elk.filebeat.resources | nindent 12 }}
+          volumeMounts:
+            - {name: config, mountPath: /etc/filebeat.yml, subPath: filebeat.yml, readOnly: true}
+            - {name: varlog, mountPath: /var/log, readOnly: true}
+            - {name: data, mountPath: /usr/share/filebeat/data}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $full }}-filebeat
+        - name: varlog
+          hostPath: {path: /var/log}
+        - name: data
+          hostPath:
+            path: /var/lib/{{ $full }}-filebeat-data
+            type: DirectoryOrCreate
+{{- end }}

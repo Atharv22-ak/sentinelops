@@ -1,0 +1,46 @@
+# Local development stack:  docker compose up --build
+#   dashboard -> http://localhost:8001   ingest -> http://localhost:8000   rabbitmq UI -> http://localhost:15672
+x-app: &app
+  environment: &env
+    POSTGRES_DSN: postgresql://sentinel:sentinel@postgres:5432/sentinel
+    REDIS_URL: redis://redis:6379/0
+    AMQP_URL: amqp://sentinel:sentinel@rabbitmq:5672/
+    API_KEYS: dev-key
+    INGEST_API_KEY: dev-key
+    INGEST_URL: http://ingest-api:8000
+    FAULT_EVERY_SEC: "90"
+    FAULT_DURATION_SEC: "45"
+  depends_on: [postgres, redis, rabbitmq]
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_DB: sentinel, POSTGRES_USER: sentinel, POSTGRES_PASSWORD: sentinel}
+    volumes: [pgdata:/var/lib/postgresql/data]
+  redis:
+    image: redis:7.2-alpine
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment: {RABBITMQ_DEFAULT_USER: sentinel, RABBITMQ_DEFAULT_PASS: sentinel}
+    ports: ["15672:15672"]
+  ingest-api:
+    <<: *app
+    build: {context: ., dockerfile: services/Dockerfile, args: {SERVICE: ingest_api}}
+    ports: ["8000:8000"]
+  processor:
+    <<: *app
+    build: {context: ., dockerfile: services/Dockerfile, args: {SERVICE: processor}}
+  alert-service:
+    <<: *app
+    build: {context: ., dockerfile: services/Dockerfile, args: {SERVICE: alert_service}}
+  query-api:
+    <<: *app
+    build: {context: ., dockerfile: services/Dockerfile, args: {SERVICE: query_api}}
+    ports: ["8001:8000"]
+  loadgen:
+    <<: *app
+    build: {context: ., dockerfile: services/Dockerfile, args: {SERVICE: loadgen}}
+    depends_on: [ingest-api]
+volumes:
+  pgdata:

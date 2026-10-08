@@ -1,0 +1,137 @@
+# ---------------------------------------------------------------------------
+# SentinelOps - default values. Override with -f values-cluster.yaml / --set.
+# ---------------------------------------------------------------------------
+global:
+  imageRegistry: rwxatharv        # Docker Hub user / registry prefix
+  imageTag: v1
+  imagePullPolicy: IfNotPresent
+  storageClass: ""                # "" => cluster default (local-path on this cluster)
+
+# --- External access through the existing Envoy Gateway (Gateway API) -------
+gateway:
+  enabled: true
+  name: main-gateway
+  namespace: default
+  baseDomain: 3.108.88.140.nip.io  # <elastic-ip>.nip.io
+  nodePort: 32136                  # only used to print URLs / alert links
+  hosts:
+    dashboard: sentinel            # -> sentinel.<baseDomain>
+    ingest: sentinel-ingest        # -> sentinel-ingest.<baseDomain>
+    kibana: sentinel-kibana        # -> sentinel-kibana.<baseDomain> (only if elk.kibana.expose)
+
+# --- Secrets (override in real deployments: --set / existingSecret) ---------
+secrets:
+  existingSecret: ""              # must contain: POSTGRES_PASSWORD, POSTGRES_DSN, AMQP_URL,
+                                  # RABBITMQ_DEFAULT_PASS, API_KEYS, INGEST_API_KEY, WEBHOOK_URL
+  postgresPassword: change-me-pg  # URL-safe characters only (used inside a DSN)
+  rabbitmqPassword: change-me-mq
+  apiKeys: change-me-key-1        # comma separated list of accepted X-API-Key values
+  webhookUrl: ""                  # Teams / Slack / generic webhook; empty = alerts only stored
+
+# --- Non-secret application tuning (rendered into a ConfigMap) ---------------
+config:
+  LOG_LEVEL: INFO
+  RATE_LIMIT_PER_MINUTE: "6000"
+  MAX_BATCH_SIZE: "500"
+  BUCKET_SEC: "10"
+  WINDOW_BUCKETS: "6"
+  DETECTOR_INTERVAL_SEC: "10"
+  MIN_EVENTS: "20"
+  ERROR_RATE_FLOOR: "0.2"
+  LATENCY_FLOOR_MS: "500"
+  Z_THRESHOLD: "3.0"
+  HEARTBEAT_TIMEOUT_SEC: "90"
+  RETENTION_HOURS: "48"
+  ALERT_COOLDOWN_SEC: "300"
+  AUTO_RESOLVE_SEC: "600"
+  WEBHOOK_KIND: teams             # generic | teams | slack
+
+# --- Application services -----------------------------------------------------
+ingestApi:
+  replicas: 2
+  autoscaling: {enabled: false, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70}  # needs metrics-server
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+processor:
+  replicas: 2
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+alertService:
+  replicas: 1
+  resources:
+    requests: {cpu: 25m, memory: 80Mi}
+    limits: {cpu: 250m, memory: 192Mi}
+
+queryApi:
+  replicas: 1
+  resources:
+    requests: {cpu: 50m, memory: 96Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+loadgen:                          # demo traffic + injected faults; disable in "real" use
+  enabled: true
+  replicas: 1
+  env:
+    EVENTS_PER_SECOND: "20"
+    FAULT_EVERY_SEC: "300"
+    FAULT_DURATION_SEC: "90"
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 160Mi}
+
+# --- Data layer ---------------------------------------------------------------
+postgres:
+  image: postgres:16-alpine
+  storage: 5Gi
+  resources:
+    requests: {cpu: 100m, memory: 192Mi}
+    limits: {cpu: 500m, memory: 384Mi}
+
+redis:
+  image: redis:7.2-alpine
+  maxMemory: 128mb
+  resources:
+    requests: {cpu: 25m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 192Mi}
+
+rabbitmq:
+  image: rabbitmq:3.13-management-alpine
+  storage: 2Gi
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+
+# --- Network policies (Calico enforces these) ----------------------------------
+networkPolicy:
+  enabled: true
+  gatewayNamespace: envoy-gateway-system
+
+# --- Optional ELK stack: centralised, structured log search ---------------------
+elk:
+  enabled: false                  # <-- helm upgrade --set elk.enabled=true
+  version: "8.13.4"
+  retentionDays: 3
+  elasticsearch:
+    heap: 512m
+    storage: 5Gi
+    resources:
+      requests: {cpu: 200m, memory: 896Mi}
+      limits: {cpu: 1000m, memory: 1536Mi}
+  logstash:
+    heap: 256m
+    resources:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {cpu: 500m, memory: 768Mi}
+  kibana:
+    expose: false                 # no auth in this setup -> keep false and use kubectl port-forward
+    resources:
+      requests: {cpu: 100m, memory: 512Mi}
+      limits: {cpu: 500m, memory: 1Gi}
+  filebeat:
+    resources:
+      requests: {cpu: 25m, memory: 64Mi}
+      limits: {cpu: 200m, memory: 160Mi}

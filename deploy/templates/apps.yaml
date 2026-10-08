@@ -1,0 +1,11 @@
+{{ include "sentinelops.workload" (dict "root" . "component" "ingest-api" "image" "ingest-api" "cfg" .Values.ingestApi) }}
+---
+{{ include "sentinelops.workload" (dict "root" . "component" "processor" "image" "processor" "cfg" .Values.processor) }}
+---
+{{ include "sentinelops.workload" (dict "root" . "component" "alert-service" "image" "alert-service" "cfg" .Values.alertService) }}
+---
+{{ include "sentinelops.workload" (dict "root" . "component" "query-api" "image" "query-api" "cfg" .Values.queryApi) }}
+{{- if .Values.loadgen.enabled }}
+---
+{{ include "sentinelops.workload" (dict "root" . "component" "loadgen" "image" "loadgen" "cfg" .Values.loadgen) }}
+{{- end }}

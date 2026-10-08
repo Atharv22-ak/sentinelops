@@ -1,0 +1,36 @@
+{{- if .Values.elk.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ctx := dict "root" . "component" "logstash" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-logstash
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+data:
+  logstash.yml: |
+    http.host: "0.0.0.0"
+    pipeline.workers: 1
+    pipeline.batch.size: 125
+    xpack.monitoring.enabled: false
+  logstash.conf: |
+    input {
+      beats { port => 5044 }
+    }
+    filter {
+      # Our services log one JSON object per line -> parse it into structured fields.
+      if [message] =~ /^\s*\{/ {
+        json { source => "message" target => "app_log" skip_on_invalid_json => true }
+      }
+      if [app_log][timestamp] {
+        date { match => ["[app_log][timestamp]", "ISO8601"] target => "@timestamp" }
+      }
+      mutate { remove_field => ["agent", "ecs", "input"] }
+    }
+    output {
+      elasticsearch {
+        hosts => ["http://{{ $full }}-elasticsearch:9200"]
+        index => "sentinelops-logs-%{+YYYY.MM.dd}"
+      }
+    }
+{{- end }}

@@ -1,0 +1,78 @@
+{{- if .Values.elk.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ctx := dict "root" . "component" "elasticsearch" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-elasticsearch
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  selector:
+    {{- include "sentinelops.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - {name: http, port: 9200}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $full }}-elasticsearch
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  serviceName: {{ $full }}-elasticsearch
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sentinelops.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentinelops.labels" $ctx | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        - name: sysctl
+          image: busybox:1.36
+          command: ["sysctl", "-w", "vm.max_map_count=262144"]
+          securityContext:
+            privileged: true
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:{{ .Values.elk.version }}
+          ports:
+            - {name: http, containerPort: 9200}
+            - {name: transport, containerPort: 9300}
+          env:
+            - {name: cluster.name, value: sentinelops}
+            - {name: discovery.type, value: single-node}
+            # Security is disabled for this single-node lab setup. Never expose 9200 outside the cluster.
+            - {name: xpack.security.enabled, value: "false"}
+            - {name: xpack.ml.enabled, value: "false"}
+            - {name: ES_JAVA_OPTS, value: "-Xms{{ .Values.elk.elasticsearch.heap }} -Xmx{{ .Values.elk.elasticsearch.heap }}"}
+          readinessProbe:
+            httpGet: {path: "/_cluster/health?local=true", port: http}
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 120
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.elk.elasticsearch.resources | nindent 12 }}
+          volumeMounts:
+            - {name: data, mountPath: /usr/share/elasticsearch/data}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- include "sentinelops.storageClass" . | nindent 8 }}
+        resources:
+          requests:
+            storage: {{ .Values.elk.elasticsearch.storage }}
+{{- end }}

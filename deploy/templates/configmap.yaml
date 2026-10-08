@@ -1,0 +1,14 @@
+{{- $full := include "sentinelops.fullname" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-config
+  labels:
+    {{- include "sentinelops.labels" (dict "root" . "component" "config") | nindent 4 }}
+data:
+  REDIS_URL: {{ printf "redis://%s-redis:6379/0" $full | quote }}
+  INGEST_URL: {{ printf "http://%s-ingest-api:8000" $full | quote }}
+  DASHBOARD_URL: {{ printf "http://%s:%v" (include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.dashboard)) .Values.gateway.nodePort | quote }}
+  {{- range $k, $v := .Values.config }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

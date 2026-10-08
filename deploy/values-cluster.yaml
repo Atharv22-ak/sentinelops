@@ -1,0 +1,15 @@
+# Overrides for the self-managed 3-node EC2 cluster (Elastic IP 3.108.88.140, Envoy Gateway on NodePort 32136).
+# Usage: helm upgrade --install sentinelops deploy/helm/sentinelops -n sentinelops --create-namespace \
+#          -f deploy/helm/sentinelops/values-cluster.yaml --set secrets.postgresPassword=... (etc.)
+global:
+  imageRegistry: rwxatharv
+  imageTag: v1
+
+gateway:
+  baseDomain: 3.108.88.140.nip.io
+  nodePort: 32136
+
+# t3.medium workers (4 GB each) are shared with other workloads -> keep the footprint small.
+ingestApi: {replicas: 2}
+processor: {replicas: 2}
+queryApi: {replicas: 1}

@@ -1,0 +1,56 @@
+{{- if .Values.elk.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ctx := dict "root" . "component" "kibana" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-kibana
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  selector:
+    {{- include "sentinelops.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - {name: http, port: 5601}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}-kibana
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "sentinelops.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentinelops.labels" $ctx | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: kibana
+          image: docker.elastic.co/kibana/kibana:{{ .Values.elk.version }}
+          ports:
+            - {name: http, containerPort: 5601}
+          env:
+            - {name: ELASTICSEARCH_HOSTS, value: "http://{{ $full }}-elasticsearch:9200"}
+            - {name: NODE_OPTIONS, value: "--max-old-space-size=512"}
+            - {name: TELEMETRY_OPTIN, value: "false"}
+          readinessProbe:
+            httpGet: {path: /api/status, port: http}
+            initialDelaySeconds: 90
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 20
+          livenessProbe:
+            tcpSocket: {port: http}
+            initialDelaySeconds: 240
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.elk.kibana.resources | nindent 12 }}
+{{- end }}
