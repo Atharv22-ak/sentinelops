@@ -21,9 +21,9 @@ jobs:
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/
       - name: render (ELK off)
-        run: helm template t deploy/helm/sentinelops -n sentinelops > /tmp/off.yaml
+        run: helm template t deploy/ -n sentinelops > /tmp/off.yaml
       - name: render (ELK on)
-        run: helm template t deploy/helm/sentinelops -n sentinelops --set elk.enabled=true > /tmp/on.yaml
+        run: helm template t deploy/ -n sentinelops --set elk.enabled=true > /tmp/on.yaml
       - name: validate manifests
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar xz
