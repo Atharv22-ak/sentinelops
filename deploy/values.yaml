@@ -2,8 +2,8 @@
 # SentinelOps - default values. Override with -f values-cluster.yaml / --set.
 # ---------------------------------------------------------------------------
 global:
-  imageRegistry: rwxatharv        # registry host / Docker Hub user, e.g. 123456789012.dkr.ecr.ap-south-1.amazonaws.com
-  imageRepository: ""             # "" = one repo per service (<registry>/sentinelops-<service>:<tag>)
+  imageRegistry: "116261338703.dkr.ecr.ap-south-1.amazonaws.com"        # registry host / Docker Hub user, e.g. 123456789012.dkr.ecr.ap-south-1.amazonaws.com
+  imageRepository: "sentinelops"             # "" = one repo per service (<registry>/sentinelops-<service>:<tag>)
                                   # "sentinelops" = ONE repo for all services (<registry>/sentinelops:<service>-<tag>)
   imageTag: ""                    # optional FALLBACK for services that do not set their own <service>.image.tag below.
                                   # Tags must be immutable (Git SHA / release version); v1/latest are rejected.
@@ -18,7 +18,7 @@ ecr:
   refresh:
     enabled: false
     region: ap-south-1
-    registry: ""                  # default: host part of global.imageRegistry
+    registry: "116261338703.dkr.ecr.ap-south-1.amazonaws.com"                  # default: host part of global.imageRegistry
     secretName: regcred
     schedule: "0 */6 * * *"
     awsCredentialsSecret: ""      # Secret with AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (IAM user allowed ecr:GetAuthorizationToken only).
@@ -53,9 +53,9 @@ gateway:
 secrets:
   existingSecret: ""              # must contain: POSTGRES_PASSWORD, POSTGRES_DSN, AMQP_URL, RABBITMQ_DEFAULT_PASS,
                                   # API_KEYS, INGEST_API_KEY, WEBHOOK_URL
-  postgresPassword: ""            # URL-safe characters only (used inside a DSN)
-  rabbitmqPassword: ""
-  apiKeys: ""                     # comma separated list of accepted X-API-Key values (first one is used by loadgen)
+  postgresPassword: "Atharv@123"            # URL-safe characters only (used inside a DSN)
+  rabbitmqPassword: "Rabbit@123"           # URL-safe characters only
+  apiKeys: "a31752b28c4291221c358b0d12255c5a9bd3c897fe0a39060c46225125bc0ffa"                     # comma separated list of accepted X-API-Key values (first one is used by loadgen)
   webhookUrl: ""                  # Teams / Slack / generic webhook; empty = alerts only stored
   externalSecret:
     enabled: false
