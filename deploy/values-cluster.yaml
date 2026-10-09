@@ -2,7 +2,11 @@
 # Usage:  make deploy            (SECRET_NAME=<existing secret>  or  PG_PASSWORD/MQ_PASSWORD/API_KEY, see Makefile)
 # GitOps: Argo CD watches this file (argocd/application.yaml); CI bumps global.imageTag after every successful image build.
 global:
-  imageRegistry: rwxatharv
+  imageRegistry: 116261338703.dkr.ecr.ap-south-1.amazonaws.com
+  imageRepository: sentinelops   # ONE ECR repo; images are told apart by tag: sentinelops:<service>-<git-sha>
+
+ecr:
+  refresh: {enabled: true, region: ap-south-1}   # keeps the `regcred` pull secret fresh (12h ECR tokens)
 
 # Each service pins its OWN immutable tag, so ingest-api can move to a new SHA while processor stays on an older one.
 # CI (.github/workflows/ci.yml, job "bump") writes the SHA of every image it built; edit a single line to roll one service back.

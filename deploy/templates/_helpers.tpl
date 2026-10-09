@@ -24,6 +24,8 @@ app.kubernetes.io/component: {{ .component }}
 {{/*
   Image reference for one service. Each service pins its own tag (<service>.image.tag); global.imageTag is only an
   optional fallback. Tags must be immutable (Git SHA / release version) - mutable ones are rejected.
+  Single-repo mode (global.imageRepository=sentinelops): registry/sentinelops:<service>-<tag>, e.g. sentinelops:processor-9f2c1ab04d11
+  Otherwise one repo per service: registry/sentinelops-<service>:<tag>.
   Call with: dict "root" . "name" <image name> "key" <values key, e.g. ingestApi> "cfg" <service values>
 */}}
 {{- define "sentinelops.image" -}}
@@ -35,12 +37,21 @@ app.kubernetes.io/component: {{ .component }}
 {{- if has $tag (list "latest" "v1" "dev" "stable") -}}
 {{- fail (printf "%s.image.tag=%q is a mutable tag; use the Git SHA or a release version" .key $tag) -}}
 {{- end -}}
+{{- $repo := .root.Values.global.imageRepository -}}
+{{- if $repo -}}
+{{ .root.Values.global.imageRegistry }}/{{ $repo }}:{{ .name }}-{{ $tag }}
+{{- else -}}
 {{ .root.Values.global.imageRegistry }}/sentinelops-{{ .name }}:{{ $tag }}
+{{- end -}}
 {{- end -}}
 
 {{/* imagePullSecrets block (empty when none configured). */}}
 {{- define "sentinelops.imagePullSecrets" -}}
-{{- with .Values.global.imagePullSecrets }}
+{{- $secrets := .Values.global.imagePullSecrets -}}
+{{- if and (not $secrets) .Values.ecr.refresh.enabled -}}
+{{- $secrets = list (dict "name" .Values.ecr.refresh.secretName) -}}
+{{- end -}}
+{{- with $secrets }}
 imagePullSecrets:
   {{- toYaml . | nindent 2 }}
 {{- end }}

@@ -2,12 +2,28 @@
 # SentinelOps - default values. Override with -f values-cluster.yaml / --set.
 # ---------------------------------------------------------------------------
 global:
-  imageRegistry: rwxatharv        # registry/repo prefix, e.g. 123456789012.dkr.ecr.ap-south-1.amazonaws.com/sentinelops
+  imageRegistry: rwxatharv        # registry host / Docker Hub user, e.g. 123456789012.dkr.ecr.ap-south-1.amazonaws.com
+  imageRepository: ""             # "" = one repo per service (<registry>/sentinelops-<service>:<tag>)
+                                  # "sentinelops" = ONE repo for all services (<registry>/sentinelops:<service>-<tag>)
   imageTag: ""                    # optional FALLBACK for services that do not set their own <service>.image.tag below.
                                   # Tags must be immutable (Git SHA / release version); v1/latest are rejected.
   imagePullPolicy: IfNotPresent
   imagePullSecrets: []            # private registry, e.g. [{name: regcred}]. Not needed with node IAM roles (ECR) / workload identity.
   storageClass: ""                # "" => cluster default (local-path on this cluster)
+
+# --- ECR pull secret for a self-managed (kubeadm) cluster --------------------------------------------
+# ECR tokens last 12h. When enabled, a CronJob keeps the `secretName` docker-registry Secret fresh and every pod
+# automatically uses it as imagePullSecrets. Create the first Secret with:  make ecr-secret
+ecr:
+  refresh:
+    enabled: false
+    region: ap-south-1
+    registry: ""                  # default: host part of global.imageRegistry
+    secretName: regcred
+    schedule: "0 */6 * * *"
+    awsCredentialsSecret: ""      # Secret with AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (IAM user allowed ecr:GetAuthorizationToken only).
+                                  # Empty = use the node's instance role (needs IMDS hop limit 2 so pods can reach it).
+    image: alpine/k8s:1.30.2      # aws-cli + kubectl
 
 # One dedicated ServiceAccount per component (token automount stays OFF unless a component needs the API).
 serviceAccount:

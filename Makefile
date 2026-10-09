@@ -1,4 +1,6 @@
-REGISTRY   ?= rwxatharv
+REGISTRY   ?= 116261338703.dkr.ecr.ap-south-1.amazonaws.com
+# one ECR repo for every service: image = $(REGISTRY)/$(REPOSITORY):<service>-<tag>. Empty REPOSITORY = one repo per service.
+REPOSITORY ?= sentinelops
 # Immutable tag: the Git commit. Never deploy v1/latest (the chart rejects them). CI pushes the full SHA; locally the short one.
 TAG        ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null)
 PLATFORM   ?= linux/amd64
@@ -6,7 +8,7 @@ NAMESPACE  ?= sentinelops
 RELEASE    ?= sentinelops
 CHART      := deploy
 SERVICES   := ingest_api processor alert_service query_api loadgen
-img         = $(REGISTRY)/sentinelops-$(subst _,-,$(1)):$(TAG)
+img         = $(if $(REPOSITORY),$(REGISTRY)/$(REPOSITORY):$(subst _,-,$(1))-$(TAG),$(REGISTRY)/sentinelops-$(subst _,-,$(1)):$(TAG))
 
 # --- secrets for `make deploy` -------------------------------------------------------------------------------
 # Preferred: SECRET_NAME=<existing k8s Secret> (create it with `make secret`, or let External Secrets manage it).
@@ -30,7 +32,7 @@ QUERY_TAG     ?= $(TAG)
 LOADGEN_TAG   ?= $(TAG)
 TAG_ARGS = --set global.imageTag=$(TAG) --set ingestApi.image.tag=$(INGEST_TAG) --set processor.image.tag=$(PROCESSOR_TAG) \
            --set alertService.image.tag=$(ALERT_TAG) --set queryApi.image.tag=$(QUERY_TAG) --set loadgen.image.tag=$(LOADGEN_TAG)
-HELM_COMMON = -f $(CHART)/values-cluster.yaml $(TAG_ARGS) --set global.imageRegistry=$(REGISTRY) $(SECRET_ARGS)
+HELM_COMMON = -f $(CHART)/values-cluster.yaml $(TAG_ARGS) --set global.imageRegistry=$(REGISTRY) --set global.imageRepository=$(REPOSITORY) $(SECRET_ARGS)
 
 # --- ops tooling -------------------------------------------------------------------------------------------
 METRICS_SERVER_VERSION ?= v0.7.2
@@ -40,12 +42,23 @@ METRICS_SERVER_INSECURE_TLS ?= true
 LT_URL      ?= $(URL)
 LT_DURATION ?= 60
 
-.PHONY: help install lint test build push deploy deploy-elk elk-on elk-off helm-check secret undeploy \
+AWS_REGION ?= ap-south-1
+ECR_HOST   ?= 116261338703.dkr.ecr.$(AWS_REGION).amazonaws.com
+
+.PHONY: ecr-login ecr-secret help install lint test build push deploy deploy-elk elk-on elk-off helm-check secret undeploy \
         metrics-server monitoring-on monitoring-off pf-kibana pf-rabbit pf-grafana logs \
         loadtest loadtest-smoke loadtest-ramp loadtest-soak loadtest-prep loadtest-restore chaos up down
 
 help:            ## show targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n",$$1,$$2}'
+
+ecr-login:       ## docker login to ECR (needs aws cli + credentials)
+	aws ecr get-login-password --region $(AWS_REGION) | docker login --username AWS --password-stdin $(ECR_HOST)
+
+ecr-secret:      ## create the initial `regcred` pull secret (the in-cluster CronJob refreshes it afterwards)
+	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
+	kubectl -n $(NAMESPACE) create secret docker-registry regcred --docker-server=$(ECR_HOST) --docker-username=AWS \
+	  --docker-password="$$(aws ecr get-login-password --region $(AWS_REGION))" --dry-run=client -o yaml | kubectl apply -f -
 
 install:         ## dev dependencies
 	pip install -r requirements-dev.txt
@@ -59,13 +72,13 @@ test:            ## unit tests
 build:           ## build all images tagged with the Git SHA (linux/amd64 for the EC2 nodes)
 	@test -n "$(TAG)" || (echo "TAG is empty - not inside a git checkout? pass TAG=<git sha>"; exit 1)
 	@for s in $(SERVICES); do \
-	  echo "==> $$s"; \
+	  n=$$(echo $$s | tr _ -); echo "==> $$s"; \
 	  docker build --platform $(PLATFORM) -f services/Dockerfile --build-arg SERVICE=$$s \
-	    --label org.opencontainers.image.revision=$(TAG) -t $(call img,$$s) . || exit 1; \
+	    --label org.opencontainers.image.revision=$(TAG) -t $(call img,$$n) . || exit 1; \
 	done
 
 push:            ## push all images
-	@for s in $(SERVICES); do docker push $(REGISTRY)/sentinelops-$$(echo $$s | tr _ -):$(TAG) || exit 1; done
+	@for s in $(SERVICES); do n=$$(echo $$s | tr _ -); docker push $(call img,$$n) || exit 1; done
 
 helm-check:      ## lint + render (ELK off / on / monitoring+keda+externalsecret on) with throw-away values
 	helm lint $(CHART) --set global.imageTag=$(TAG) --set secrets.postgresPassword=lint0only --set secrets.rabbitmqPassword=lint0only --set secrets.apiKeys=lint0only

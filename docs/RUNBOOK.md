@@ -88,6 +88,7 @@ Pause Argo CD auto-sync first (`argocd app set sentinelops --sync-policy none`),
 | Filebeat sends nothing | `kubectl -n sentinelops logs ds/sentinelops-filebeat`; log path pattern uses the release namespace |
 | HPA shows `<unknown>` | metrics-server is not installed (`make metrics-server`); on kubeadm clusters it needs `--kubelet-insecure-tls` (the target adds it) |
 | `helm` fails with `<service>.image.tag is required` / `secrets.* is required` | by design: pass an immutable tag and real credentials (`make deploy SECRET_NAME=...`) |
+| `ImagePullBackOff` / 401 from ECR | `regcred` expired or missing: `make ecr-secret`; check the refresh CronJob (`kubectl -n sentinelops get cronjob,job`) and see docs/PRODUCTION_READINESS.md |
 | Pod cannot reach a backend after an upgrade | the NetworkPolicies are per-pair; add the missing source to `deploy/templates/security/networkpolicy.yaml` (table in docs/PRODUCTION_READINESS.md) |
 | Load test shows lots of 429 / 413 | `make loadtest-prep` (rate limit / batch cap), restore with `make loadtest-restore` |
 | Data lost after pod moved nodes | `local-path` PVCs are node-bound (known limitation of this cluster) |

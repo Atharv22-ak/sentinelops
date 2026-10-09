@@ -6,7 +6,7 @@ something installed in the cluster or a one-time manual step are listed in [Manu
 | P | Change | Where | How to use it |
 |---|---|---|---|
 | P0 | Secret / API key management | `deploy/templates/secrets/`, `Makefile` (`secret`) | No defaults any more. `secrets.externalSecret.enabled=true` (AWS Secrets Manager / Azure Key Vault via External Secrets), or `secrets.existingSecret=<name>` (`make secret`). The chart **refuses to render** without credentials or with `change-me*` values. |
-| P0 | Immutable / private images | `_helpers.tpl`, `values.yaml` `global.*`, CI, `Makefile` | **Every service has its own tag** (`ingestApi.image.tag`, `processor.image.tag`, ... in `values-cluster.yaml`), so services can be rolled forward/back independently; `global.imageTag` is only an optional fallback. A missing tag fails the render and `v1`/`latest`/`dev`/`stable` are rejected. CI pushes only the Git SHA tag (no `:latest`) with OCI revision labels. `global.imageRegistry` can point at ECR/ACR; `global.imagePullSecrets` for registry auth. |
+| P0 | Immutable / private images | `_helpers.tpl`, `values.yaml` `global.*`, CI, `Makefile` | **Every service has its own tag** (`ingestApi.image.tag`, `processor.image.tag`, ... in `values-cluster.yaml`), so services can be rolled forward/back independently; `global.imageTag` is only an optional fallback. A missing tag fails the render and `v1`/`latest`/`dev`/`stable` are rejected. CI pushes only the Git SHA tag (no `:latest`) with OCI revision labels. Images live in **one repo** (`global.imageRepository: sentinelops`), told apart by tag: `sentinelops:ingest-api-<sha>`, `sentinelops:processor-<sha>`, ... (leave it empty for one repo per service). `global.imageRegistry` can point at ECR/ACR; `global.imagePullSecrets` for registry auth. |
 | P0 | Metrics Server + basic monitoring | `make metrics-server`, `templates/monitoring/*`, `dashboards/` | `make metrics-server` then `kubectl top pods`. `make monitoring-on` wires Prometheus/Grafana. |
 | P1 | HPA / KEDA | `templates/autoscaling/`, `values.yaml` `autoscaling`/`keda` | CPU HPAs on ingest-api and processor (min/max + stabilisation windows to stop flapping). `--set keda.enabled=true` swaps the processor HPA for RabbitMQ queue-depth scaling. |
 | P1 | Prometheus / Grafana | `templates/monitoring/` | ServiceMonitors for the apps, RabbitMQ (`rabbitmq_prometheus`), Redis (exporter sidecar), Elasticsearch (exporter); `PrometheusRule` alerts; 23-panel Grafana dashboard ConfigMap. |
@@ -77,6 +77,22 @@ deploy/
 Per-service image tags, e.g. in `values-cluster.yaml`:
 
 ```yaml
-ingestApi:  {image: {tag: "9f2c1ab04d11"}}
-processor:  {image: {tag: "3be77c0aa921"}}   # can differ from ingest-api
+ingestApi:  {image: {tag: "9f2c1ab04d11"}}   # -> sentinelops:ingest-api-9f2c1ab04d11
+processor:  {image: {tag: "3be77c0aa921"}}   # -> sentinelops:processor-3be77c0aa921 (can differ from ingest-api)
 ```
+
+## ECR on a kubeadm cluster (pull secret refresh)
+
+No EKS here, so nodes cannot log in to ECR by themselves. `ecr.refresh.enabled=true` (already on in `values-cluster.yaml`) adds a CronJob
+(`templates/registry/ecr-refresh.yaml`) that rewrites the `regcred` docker-registry Secret every 6 hours; all pods use it automatically.
+
+```bash
+# one-time, from a machine with aws cli + kubectl:
+make ecr-secret                       # first regcred, so the very first pods can pull
+# CronJob authentication - pick one:
+#  a) node instance role with AmazonEC2ContainerRegistryReadOnly + IMDS hop limit 2 (no keys in the cluster):
+aws ec2 modify-instance-metadata-options --instance-id <id> --http-put-response-hop-limit 2 --http-tokens required
+#  b) IAM user with ONLY ecr:GetAuthorizationToken, key stored as a Secret, then --set ecr.refresh.awsCredentialsSecret=ecr-aws-creds:
+kubectl -n sentinelops create secret generic ecr-aws-creds --from-literal=AWS_ACCESS_KEY_ID=... --from-literal=AWS_SECRET_ACCESS_KEY=...
+```
+Check it: `kubectl -n sentinelops create job --from=cronjob/sentinelops-ecr-refresh test-refresh && kubectl -n sentinelops logs job/test-refresh`.

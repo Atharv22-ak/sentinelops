@@ -1,0 +1,113 @@
+{{- if .Values.ecr.refresh.enabled }}
+{{- /*
+  ECR login tokens expire after 12h, so a kubeadm cluster (no automatic ECR auth) needs the pull secret refreshed.
+  This CronJob re-creates the docker-registry Secret (default: regcred) every few hours. All app/data pods reference it
+  through imagePullSecrets automatically (see _helpers.tpl). The first Secret is created with `make ecr-secret`.
+  AWS auth: either the node instance role (no keys; IMDS hop limit must be 2) or a Secret holding an IAM user key that
+  only has ecr:GetAuthorizationToken (ecr.refresh.awsCredentialsSecret).
+*/ -}}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $r := .Values.ecr.refresh }}
+{{- $registry := default (first (splitList "/" .Values.global.imageRegistry)) $r.registry }}
+{{- $name := printf "%s-ecr-refresh" $full }}
+{{- $ctx := dict "root" . "component" "ecr-refresh" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [{{ $r.secretName | quote }}]
+    verbs: [get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  schedule: {{ $r.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            {{- include "sentinelops.labels" $ctx | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{ $name }}
+          automountServiceAccountToken: true   # needed: the job talks to the Kubernetes API to write the Secret
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: refresh
+              image: {{ $r.image }}
+              command: ["/bin/sh", "-ec"]
+              args:
+                - |
+                  TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
+                  kubectl create secret docker-registry "$SECRET_NAME" \
+                    --docker-server="$REGISTRY" --docker-username=AWS --docker-password="$TOKEN" \
+                    --dry-run=client -o yaml | kubectl apply -f -
+                  echo "refreshed $SECRET_NAME for $REGISTRY"
+              env:
+                - {name: AWS_REGION, value: {{ $r.region | quote }}}
+                - {name: AWS_DEFAULT_REGION, value: {{ $r.region | quote }}}
+                - {name: SECRET_NAME, value: {{ $r.secretName | quote }}}
+                - {name: REGISTRY, value: {{ $registry | quote }}}
+                - {name: HOME, value: /tmp}
+              {{- with $r.awsCredentialsSecret }}
+              envFrom:
+                - secretRef: {name: {{ . | quote }}}   # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+              {{- end }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests: {cpu: 10m, memory: 64Mi}
+                limits: {cpu: 200m, memory: 192Mi}
+              volumeMounts:
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}
