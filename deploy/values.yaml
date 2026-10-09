@@ -48,14 +48,14 @@ config:
 
 # --- Application services -----------------------------------------------------
 ingestApi:
-  replicas: 2
+  replicas: 1
   autoscaling: {enabled: false, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70}  # needs metrics-server
   resources:
     requests: {cpu: 50m, memory: 96Mi}
     limits: {cpu: 500m, memory: 256Mi}
 
 processor:
-  replicas: 2
+  replicas: 1
   resources:
     requests: {cpu: 50m, memory: 96Mi}
     limits: {cpu: 500m, memory: 256Mi}
@@ -112,7 +112,7 @@ networkPolicy:
 
 # --- Optional ELK stack: centralised, structured log search ---------------------
 elk:
-  enabled: false                  # <-- helm upgrade --set elk.enabled=true
+  enabled: true                  # <-- helm upgrade --set elk.enabled=true
   version: "8.13.4"
   retentionDays: 3
   elasticsearch:
