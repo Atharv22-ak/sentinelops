@@ -1,0 +1,16 @@
+{{- /* maxUnavailable keeps node drains possible even at 1 replica while never taking down more than one pod at a time. */ -}}
+{{- $full := include "sentinelops.fullname" . }}
+{{- range $comp := list "ingest-api" "processor" "query-api" }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $full }}-{{ $comp }}
+  labels:
+    {{- include "sentinelops.labels" (dict "root" $ "component" $comp) | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      {{- include "sentinelops.selectorLabels" (dict "root" $ "component" $comp) | nindent 6 }}
+---
+{{- end }}

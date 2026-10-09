@@ -1,0 +1,98 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.prometheusRule.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ns := .Release.Namespace }}
+{{- $pr := .Values.monitoring.prometheusRule }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $full }}-alerts
+  labels:
+    {{- include "sentinelops.labels" (dict "root" . "component" "monitoring") | nindent 4 }}
+    {{- with $pr.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: sentinelops.availability
+      rules:
+        - alert: SentinelOpsContainerOOMKilled
+          expr: |
+            kube_pod_container_status_last_terminated_reason{namespace="{{ $ns }}",reason="OOMKilled",pod=~"{{ $full }}-.*"} == 1
+            and on (namespace, pod, container)
+            increase(kube_pod_container_status_restarts_total{namespace="{{ $ns }}"}[15m]) > 0
+          labels: {severity: critical}
+          annotations:
+            summary: {{ `"{{ $labels.pod }}/{{ $labels.container }} was OOMKilled"` }}
+            description: Memory limit too low or a leak. Check container_memory_working_set_bytes and docs/RUNBOOK.md (OOMKilled) before raising the limit.
+        - alert: SentinelOpsPodRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace="{{ $ns }}",pod=~"{{ $full }}-.*"}[15m]) > 2
+          for: 1m
+          labels: {severity: warning}
+          annotations:
+            summary: {{ `"{{ $labels.pod }} restarted {{ $value | humanize }} times in 15m"` }}
+        - alert: SentinelOpsDeploymentUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="{{ $ns }}",deployment=~"{{ $full }}-(ingest-api|processor|alert-service|query-api)"} == 0
+          for: 2m
+          labels: {severity: critical}
+          annotations:
+            summary: {{ `"{{ $labels.deployment }} has no available replicas"` }}
+        - alert: SentinelOpsNoDetectorLeader
+          expr: sum(sentinel_detector_is_leader{namespace="{{ $ns }}"}) == 0
+          for: 3m
+          labels: {severity: critical}
+          annotations:
+            summary: No processor replica holds the detector leader lock - anomalies are not being detected.
+    - name: sentinelops.api
+      rules:
+        - alert: SentinelOpsHighErrorRate
+          expr: |
+            100 * sum by (app) (rate(http_requests_total{namespace="{{ $ns }}",status=~"5.."}[5m]))
+            / sum by (app) (rate(http_requests_total{namespace="{{ $ns }}"}[5m])) > {{ $pr.errorRatePercent }}
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: {{ `"{{ $labels.app }}: {{ $value | humanize }}% of requests are failing with 5xx"` }}
+        - alert: SentinelOpsHighLatencyP95
+          expr: |
+            histogram_quantile(0.95, sum by (le, app) (rate(http_request_duration_seconds_bucket{namespace="{{ $ns }}"}[5m]))) > {{ $pr.p95LatencySeconds }}
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: {{ `"{{ $labels.app }} p95 latency is {{ $value | humanizeDuration }}"` }}
+    - name: sentinelops.pipeline
+      rules:
+        - alert: SentinelOpsQueueGrowing
+          expr: rabbitmq_queue_messages_ready{namespace="{{ $ns }}"} > {{ $pr.queueReadyMessages }}
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: {{ `"RabbitMQ backlog is {{ $value }} messages - processors are not keeping up"` }}
+        - alert: SentinelOpsNoQueueConsumers
+          expr: rabbitmq_consumers{namespace="{{ $ns }}"} == 0
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: RabbitMQ has no consumers - events are queueing but not processed.
+    {{- if and .Values.elk.enabled .Values.monitoring.exporters.enabled }}
+    - name: sentinelops.elasticsearch
+      rules:
+        - alert: ElasticsearchClusterRed
+          expr: elasticsearch_cluster_health_status{namespace="{{ $ns }}",color="red"} == 1
+          for: 5m
+          labels: {severity: critical}
+          annotations:
+            summary: Elasticsearch cluster health is RED.
+        - alert: ElasticsearchClusterYellow
+          expr: elasticsearch_cluster_health_status{namespace="{{ $ns }}",color="yellow"} == 1
+          for: 15m
+          labels: {severity: warning}
+          annotations:
+            summary: Elasticsearch cluster health is YELLOW (unassigned replicas).
+        - alert: ElasticsearchHeapHigh
+          expr: elasticsearch_jvm_memory_used_bytes{namespace="{{ $ns }}",area="heap"} / elasticsearch_jvm_memory_max_bytes{namespace="{{ $ns }}",area="heap"} > 0.9
+          for: 10m
+          labels: {severity: warning}
+          annotations:
+            summary: Elasticsearch JVM heap above 90%.
+    {{- end }}
+{{- end }}

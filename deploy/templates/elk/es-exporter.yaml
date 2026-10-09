@@ -1,0 +1,58 @@
+{{- if and .Values.elk.enabled .Values.monitoring.enabled .Values.monitoring.exporters.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $ctx := dict "root" . "component" "es-exporter" }}
+# Exposes Elasticsearch cluster health / index / JVM metrics for Prometheus (alert: ElasticsearchClusterNotGreen).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-es-exporter
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  selector:
+    {{- include "sentinelops.selectorLabels" $ctx | nindent 4 }}
+  ports:
+    - {name: metrics, port: 9114, targetPort: metrics}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}-es-exporter
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "sentinelops.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sentinelops.labels" $ctx | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "sentinelops.serviceAccountName" (dict "root" . "component" "es-exporter") }}
+      automountServiceAccountToken: false
+      {{- include "sentinelops.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: {{ .Values.monitoring.exporters.elasticsearchImage }}
+          args: ["--es.uri=http://{{ $full }}-elasticsearch:9200", "--es.all=false"]
+          ports:
+            - {name: metrics, containerPort: 9114}
+          readinessProbe:
+            httpGet: {path: /healthz, port: metrics}
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 10m, memory: 24Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+{{- end }}

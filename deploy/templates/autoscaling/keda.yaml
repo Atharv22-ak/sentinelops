@@ -1,0 +1,42 @@
+{{- if .Values.keda.enabled }}
+{{- /* Scale the processor on RabbitMQ queue depth (backlog), not CPU. Requires the KEDA operator. */ -}}
+{{- $full := include "sentinelops.fullname" . }}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ $full }}-rabbitmq
+  labels:
+    {{- include "sentinelops.labels" (dict "root" . "component" "processor") | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: {{ include "sentinelops.secretName" . }}
+      key: AMQP_URL
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ $full }}-processor
+  labels:
+    {{- include "sentinelops.labels" (dict "root" . "component" "processor") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ $full }}-processor
+  minReplicaCount: {{ .Values.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.keda.maxReplicas }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        {{- toYaml .Values.autoscaling.behavior | nindent 8 }}
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: {{ .Values.keda.queueName | quote }}
+        mode: QueueLength
+        value: {{ .Values.keda.queueLength | quote }}
+      authenticationRef:
+        name: {{ $full }}-rabbitmq
+{{- end }}

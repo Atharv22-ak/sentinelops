@@ -1,0 +1,1 @@
+{{- include "sentinelops.workload" (dict "root" . "component" "processor" "image" "processor" "key" "processor" "cfg" .Values.processor) }}

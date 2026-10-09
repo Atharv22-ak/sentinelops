@@ -1,0 +1,1 @@
+{{- include "sentinelops.workload" (dict "root" . "component" "ingest-api" "image" "ingest-api" "key" "ingestApi" "cfg" .Values.ingestApi) }}

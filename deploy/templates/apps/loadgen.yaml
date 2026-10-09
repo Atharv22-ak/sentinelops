@@ -1,0 +1,3 @@
+{{- if .Values.loadgen.enabled }}
+{{- include "sentinelops.workload" (dict "root" . "component" "loadgen" "image" "loadgen" "key" "loadgen" "cfg" .Values.loadgen) }}
+{{- end }}

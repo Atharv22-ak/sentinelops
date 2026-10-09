@@ -31,10 +31,22 @@ spec:
       labels:
         {{- include "sentinelops.labels" $ctx | nindent 8 }}
     spec:
+      serviceAccountName: {{ include "sentinelops.serviceAccountName" (dict "root" . "component" "kibana") }}
       automountServiceAccountToken: false
+      {{- include "sentinelops.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: kibana
           image: docker.elastic.co/kibana/kibana:{{ .Values.elk.version }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           ports:
             - {name: http, containerPort: 5601}
           env:

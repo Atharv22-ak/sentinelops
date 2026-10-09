@@ -1,0 +1,48 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.serviceMonitor.enabled }}
+{{- /*
+  Connects the /metrics endpoints the pods already expose (and the exporters) to the Prometheus Operator.
+  NOTE: pods also carry prometheus.io/* annotations; do not enable annotation-based scraping for this namespace as well
+  or every target is scraped twice.
+*/ -}}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $sm := .Values.monitoring.serviceMonitor }}
+{{- $apps := list "ingest-api" "processor" "alert-service" "query-api" }}
+{{- if .Values.loadgen.enabled }}{{ $apps = append $apps "loadgen" }}{{ end }}
+{{- $targets := list (dict "name" "apps" "components" $apps "port" "http") }}
+{{- if .Values.monitoring.exporters.enabled }}
+{{- $targets = append $targets (dict "name" "rabbitmq" "components" (list "rabbitmq") "port" "prometheus") }}
+{{- $targets = append $targets (dict "name" "redis" "components" (list "redis") "port" "metrics") }}
+{{- if .Values.elk.enabled }}{{ $targets = append $targets (dict "name" "es-exporter" "components" (list "es-exporter") "port" "metrics") }}{{ end }}
+{{- end }}
+{{- range $t := $targets }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $full }}-{{ $t.name }}
+  labels:
+    {{- include "sentinelops.labels" (dict "root" $ "component" "monitoring") | nindent 4 }}
+    {{- with $sm.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames: [{{ $.Release.Namespace }}]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sentinelops
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values:
+          {{- range $t.components }}
+          - {{ . }}
+          {{- end }}
+  targetLabels: [app.kubernetes.io/component]
+  endpoints:
+    - port: {{ $t.port }}
+      path: /metrics
+      interval: {{ $sm.interval }}
+---
+{{- end }}
+{{- end }}

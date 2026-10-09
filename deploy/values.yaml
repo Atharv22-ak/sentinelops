@@ -2,10 +2,17 @@
 # SentinelOps - default values. Override with -f values-cluster.yaml / --set.
 # ---------------------------------------------------------------------------
 global:
-  imageRegistry: rwxatharv        # Docker Hub user / registry prefix
-  imageTag: v1
+  imageRegistry: rwxatharv        # registry/repo prefix, e.g. 123456789012.dkr.ecr.ap-south-1.amazonaws.com/sentinelops
+  imageTag: ""                    # optional FALLBACK for services that do not set their own <service>.image.tag below.
+                                  # Tags must be immutable (Git SHA / release version); v1/latest are rejected.
   imagePullPolicy: IfNotPresent
+  imagePullSecrets: []            # private registry, e.g. [{name: regcred}]. Not needed with node IAM roles (ECR) / workload identity.
   storageClass: ""                # "" => cluster default (local-path on this cluster)
+
+# One dedicated ServiceAccount per component (token automount stays OFF unless a component needs the API).
+serviceAccount:
+  create: true
+  annotations: {}                 # e.g. eks.amazonaws.com/role-arn / azure.workload.identity/client-id
 
 # --- External access through the existing Envoy Gateway (Gateway API) -------
 gateway:
@@ -14,19 +21,37 @@ gateway:
   namespace: default
   baseDomain: 3.108.88.140.nip.io  # <elastic-ip>.nip.io
   nodePort: 32136                  # only used to print URLs / alert links
+  scheme: http                     # set to https once the Gateway terminates TLS (cert-manager / Envoy Gateway listener)
+  sectionName: ""                  # optional Gateway listener name to attach to (e.g. https)
   hosts:
     dashboard: sentinel            # -> sentinel.<baseDomain>
     ingest: sentinel-ingest        # -> sentinel-ingest.<baseDomain>
     kibana: sentinel-kibana        # -> sentinel-kibana.<baseDomain> (only if elk.kibana.expose)
 
-# --- Secrets (override in real deployments: --set / existingSecret) ---------
+# --- Secrets -------------------------------------------------------------------
+# NOTHING sensitive is committed here. Pick ONE of the three options:
+#   1) secrets.externalSecret.enabled=true   -> External Secrets Operator pulls from AWS Secrets Manager / Azure Key Vault (recommended)
+#   2) secrets.existingSecret=<name>         -> a Secret you created out-of-band (make secret)
+#   3) --set secrets.postgresPassword=... etc -> dev/test only (values end up in the Helm release object)
+# The chart refuses to render if none is chosen or if a "change-me*" placeholder is supplied.
 secrets:
-  existingSecret: ""              # must contain: POSTGRES_PASSWORD, POSTGRES_DSN, AMQP_URL,
-                                  # RABBITMQ_DEFAULT_PASS, API_KEYS, INGEST_API_KEY, WEBHOOK_URL
-  postgresPassword: change-me-pg  # URL-safe characters only (used inside a DSN)
-  rabbitmqPassword: change-me-mq
-  apiKeys: change-me-key-1        # comma separated list of accepted X-API-Key values
+  existingSecret: ""              # must contain: POSTGRES_PASSWORD, POSTGRES_DSN, AMQP_URL, RABBITMQ_DEFAULT_PASS,
+                                  # API_KEYS, INGEST_API_KEY, WEBHOOK_URL
+  postgresPassword: ""            # URL-safe characters only (used inside a DSN)
+  rabbitmqPassword: ""
+  apiKeys: ""                     # comma separated list of accepted X-API-Key values (first one is used by loadgen)
   webhookUrl: ""                  # Teams / Slack / generic webhook; empty = alerts only stored
+  externalSecret:
+    enabled: false
+    apiVersion: external-secrets.io/v1beta1   # use external-secrets.io/v1 on ESO >= 0.17
+    refreshInterval: 1h
+    secretStoreRef: {kind: ClusterSecretStore, name: ""}
+    # Keys inside the secret store (AWS Secrets Manager secret names / Key Vault secret names).
+    remoteRefs:
+      postgresPassword: sentinelops/postgres-password
+      rabbitmqPassword: sentinelops/rabbitmq-password
+      apiKeys: sentinelops/api-keys
+      webhookUrl: ""              # optional; empty => WEBHOOK_URL is left blank
 
 # --- Non-secret application tuning (rendered into a ConfigMap) ---------------
 config:
@@ -46,34 +71,64 @@ config:
   AUTO_RESOLVE_SEC: "600"
   WEBHOOK_KIND: teams             # generic | teams | slack
 
+# --- Autoscaling behaviour shared by every HPA (avoids replica flapping) --------
+# Needs metrics-server for CPU/memory HPAs:  make metrics-server
+autoscaling:
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies: [{type: Pods, value: 2, periodSeconds: 60}]
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies: [{type: Pods, value: 1, periodSeconds: 120}]
+
+# Queue-driven scaling for the processor (needs the KEDA operator). Replaces the processor CPU HPA when enabled.
+keda:
+  enabled: false
+  queueName: events.raw
+  queueLength: 500                # target messages in the queue per processor replica - tune with load tests
+  minReplicas: 1
+  maxReplicas: 4
+  pollingInterval: 15
+  cooldownPeriod: 300
+
 # --- Application services -----------------------------------------------------
+# HPA: start CPU-based, then tune thresholds from `make loadtest-ramp` results. min/max keep the shared 3x t3.medium cluster safe.
 ingestApi:
-  replicas: 1
-  autoscaling: {enabled: false, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70}  # needs metrics-server
+  image: {tag: ""}                 # own immutable tag for this service (falls back to global.imageTag)
+  replicas: 1                     # ignored while autoscaling is enabled
+  autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 4, targetCPUUtilizationPercentage: 70, targetMemoryUtilizationPercentage: 0}
   resources:
     requests: {cpu: 50m, memory: 96Mi}
     limits: {cpu: 500m, memory: 256Mi}
 
 processor:
+  image: {tag: ""}                 # own immutable tag for this service (falls back to global.imageTag)
   replicas: 1
+  autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 4, targetCPUUtilizationPercentage: 70, targetMemoryUtilizationPercentage: 0}
+  # 256Mi was deliberately OOM-tested (exit 137 -> container restarted). Re-size from real measurements, see docs/RUNBOOK.md ("OOMKilled").
   resources:
     requests: {cpu: 50m, memory: 96Mi}
     limits: {cpu: 500m, memory: 256Mi}
 
 alertService:
+  image: {tag: ""}                 # own immutable tag for this service (falls back to global.imageTag)
   replicas: 1
   resources:
     requests: {cpu: 25m, memory: 80Mi}
     limits: {cpu: 250m, memory: 192Mi}
 
 queryApi:
+  image: {tag: ""}                 # own immutable tag for this service (falls back to global.imageTag)
   replicas: 1
+  autoscaling: {enabled: false, minReplicas: 1, maxReplicas: 3, targetCPUUtilizationPercentage: 70, targetMemoryUtilizationPercentage: 0}
   resources:
     requests: {cpu: 50m, memory: 96Mi}
     limits: {cpu: 500m, memory: 256Mi}
 
 loadgen:                          # demo traffic + injected faults; disable in "real" use
   enabled: true
+  image: {tag: ""}                 # own immutable tag for this service
   replicas: 1
   env:
     EVENTS_PER_SECOND: "20"
@@ -109,6 +164,29 @@ rabbitmq:
 networkPolicy:
   enabled: true
   gatewayNamespace: envoy-gateway-system
+  monitoringNamespace: monitoring   # namespace of Prometheus (allowed to scrape /metrics and exporters)
+
+# --- Observability (Prometheus Operator / kube-prometheus-stack + Grafana) ------------
+# Off by default because it needs the ServiceMonitor/PrometheusRule CRDs. Enable: make monitoring-on
+monitoring:
+  enabled: false
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    labels: {}                    # e.g. {release: kube-prometheus-stack} so your Prometheus selects them
+  prometheusRule:
+    enabled: true
+    labels: {}
+    errorRatePercent: 5           # 5xx share of requests, 5m
+    p95LatencySeconds: 1          # per service, 10m
+    queueReadyMessages: 5000      # RabbitMQ ready messages, 10m
+  dashboard:
+    enabled: true
+    label: {grafana_dashboard: "1"}   # label watched by the Grafana sidecar
+  exporters:
+    enabled: true                 # rabbitmq_prometheus plugin, redis_exporter sidecar, elasticsearch_exporter (when ELK on)
+    redisImage: oliver006/redis_exporter:v1.62.0
+    elasticsearchImage: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
 
 # --- Optional ELK stack: centralised, structured log search ---------------------
 elk:
@@ -116,6 +194,7 @@ elk:
   version: "8.13.4"
   retentionDays: 3
   elasticsearch:
+    sysctlInitContainer: true     # privileged init sets vm.max_map_count; disable if nodes are pre-tuned (then ES pod has no privileged container)
     heap: 512m
     storage: 5Gi
     resources:

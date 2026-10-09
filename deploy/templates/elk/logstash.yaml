@@ -33,10 +33,22 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/elk/logstash-config.yaml") . | sha256sum }}
     spec:
+      serviceAccountName: {{ include "sentinelops.serviceAccountName" (dict "root" . "component" "logstash") }}
       automountServiceAccountToken: false
+      {{- include "sentinelops.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: logstash
           image: docker.elastic.co/logstash/logstash:{{ .Values.elk.version }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           ports:
             - {name: beats, containerPort: 5044}
           env:

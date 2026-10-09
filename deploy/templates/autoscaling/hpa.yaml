@@ -1,0 +1,42 @@
+{{- /*
+  CPU (optionally memory) HPAs for the stateless services. Needs metrics-server.
+  The processor's CPU HPA is skipped when KEDA (queue-depth scaling) owns it.
+*/ -}}
+{{- $full := include "sentinelops.fullname" . }}
+{{- $comps := list (dict "name" "ingest-api" "cfg" .Values.ingestApi) (dict "name" "processor" "cfg" .Values.processor) (dict "name" "query-api" "cfg" .Values.queryApi) }}
+{{- range $c := $comps }}
+{{- $as := default dict $c.cfg.autoscaling }}
+{{- if and $as.enabled (not (and (eq $c.name "processor") $.Values.keda.enabled)) }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $full }}-{{ $c.name }}
+  labels:
+    {{- include "sentinelops.labels" (dict "root" $ "component" $c.name) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $full }}-{{ $c.name }}
+  minReplicas: {{ $as.minReplicas }}
+  maxReplicas: {{ $as.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $as.targetCPUUtilizationPercentage }}
+    {{- if $as.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $as.targetMemoryUtilizationPercentage }}
+    {{- end }}
+  behavior:
+    {{- toYaml $.Values.autoscaling.behavior | nindent 4 }}
+---
+{{- end }}
+{{- end }}

@@ -1,0 +1,34 @@
+# GitOps deployment: Argo CD watches this repo and applies deploy/ + deploy/values-cluster.yaml.
+# CI (.github/workflows/ci.yml, job "bump") commits the new immutable image tag into values-cluster.yaml,
+# so every deployment is a reviewable, revertable Git commit.
+#
+#   kubectl apply -n argocd -f argocd/application.yaml
+#
+# Credentials are NOT passed through Argo/Helm values: enable secrets.externalSecret (External Secrets Operator) or point
+# secrets.existingSecret at a Secret created out-of-band (make secret) in deploy/values-cluster.yaml first.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: sentinelops
+  namespace: argocd
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Atharv22-ak/sentinelops.git
+    targetRevision: main
+    path: deploy
+    helm:
+      releaseName: sentinelops
+      valueFiles: [values-cluster.yaml]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: sentinelops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true            # pause (argocd app set sentinelops --sync-policy none) while running scripts/chaos.sh
+    syncOptions: [CreateNamespace=true, ServerSideApply=true]
+    retry:
+      limit: 3
+      backoff: {duration: 20s, factor: 2, maxDuration: 3m}

@@ -49,11 +49,23 @@ spec:
         {{- include "sentinelops.labels" $ctx | nindent 8 }}
     spec:
       restartPolicy: OnFailure
+      serviceAccountName: {{ include "sentinelops.serviceAccountName" (dict "root" . "component" "elk-bootstrap") }}
       automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: bootstrap
           image: curlimages/curl:8.7.1
           command: ["/bin/sh", "/scripts/bootstrap.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
           resources:
             requests: {cpu: 10m, memory: 16Mi}
             limits: {cpu: 100m, memory: 64Mi}

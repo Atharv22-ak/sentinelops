@@ -1,15 +1,35 @@
 # Overrides for the self-managed 3-node EC2 cluster (Elastic IP 3.108.88.140, Envoy Gateway on NodePort 32136).
-# Usage: helm upgrade --install sentinelops deploy/helm/sentinelops -n sentinelops --create-namespace \
-#          -f deploy/helm/sentinelops/values-cluster.yaml --set secrets.postgresPassword=... (etc.)
+# Usage:  make deploy            (SECRET_NAME=<existing secret>  or  PG_PASSWORD/MQ_PASSWORD/API_KEY, see Makefile)
+# GitOps: Argo CD watches this file (argocd/application.yaml); CI bumps global.imageTag after every successful image build.
 global:
   imageRegistry: rwxatharv
-  imageTag: v1
+
+# Each service pins its OWN immutable tag, so ingest-api can move to a new SHA while processor stays on an older one.
+# CI (.github/workflows/ci.yml, job "bump") writes the SHA of every image it built; edit a single line to roll one service back.
 
 gateway:
   baseDomain: 3.108.88.140.nip.io
   nodePort: 32136
 
+# Secrets: keep ALL credentials out of Git. Choose one (see values.yaml):
+#secrets:
+#  existingSecret: sentinelops-secrets          # created with `make secret`
+#  externalSecret:
+#    enabled: true
+#    secretStoreRef: {kind: ClusterSecretStore, name: aws-secrets-manager}
+
 # t3.medium workers (4 GB each) are shared with other workloads -> keep the footprint small.
-ingestApi: {replicas: 2}
-processor: {replicas: 2}
-queryApi: {replicas: 1}
+# HPAs own the replica count; these are the floors/ceilings.
+ingestApi:
+  image: {tag: ""}
+  autoscaling: {minReplicas: 2, maxReplicas: 4}
+processor:
+  image: {tag: ""}
+  autoscaling: {minReplicas: 2, maxReplicas: 4}
+alertService:
+  image: {tag: ""}
+queryApi:
+  image: {tag: ""}
+  replicas: 1
+loadgen:
+  image: {tag: ""}

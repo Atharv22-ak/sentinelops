@@ -1,0 +1,13 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.dashboard.enabled }}
+{{- $full := include "sentinelops.fullname" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-grafana-dashboard
+  labels:
+    {{- include "sentinelops.labels" (dict "root" . "component" "monitoring") | nindent 4 }}
+    {{- toYaml .Values.monitoring.dashboard.label | nindent 4 }}
+data:
+  sentinelops.json: |-
+    {{- .Files.Get "dashboards/sentinelops.json" | nindent 4 }}
+{{- end }}

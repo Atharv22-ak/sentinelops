@@ -1,0 +1,1 @@
+{{- include "sentinelops.workload" (dict "root" . "component" "query-api" "image" "query-api" "key" "queryApi" "cfg" .Values.queryApi) }}

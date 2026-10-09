@@ -58,6 +58,11 @@ spec:
           args: ["-e", "-c", "/etc/filebeat.yml", "--strict.perms=false"]
           securityContext:
             runAsUser: 0      # needed to read /var/log/pods on the node (read-only mount)
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
           env:
             - name: NODE_NAME
               valueFrom:

@@ -1,14 +1,21 @@
 SentinelOps {{ .Chart.AppVersion }} deployed to namespace "{{ .Release.Namespace }}".
 
-  Dashboard : http://{{ include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.dashboard) }}:{{ .Values.gateway.nodePort }}
-  Ingest API: http://{{ include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.ingest) }}:{{ .Values.gateway.nodePort }}/v1/events   (header: X-API-Key)
+  Dashboard : {{ .Values.gateway.scheme }}://{{ include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.dashboard) }}:{{ .Values.gateway.nodePort }}
+  Ingest API: {{ .Values.gateway.scheme }}://{{ include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.ingest) }}:{{ .Values.gateway.nodePort }}/v1/events   (header: X-API-Key)
+
+Image tags in use (immutable, one per service):
+  ingest-api   {{ default .Values.global.imageTag .Values.ingestApi.image.tag }}
+  processor    {{ default .Values.global.imageTag .Values.processor.image.tag }}
+  alert-service {{ default .Values.global.imageTag .Values.alertService.image.tag }}
+  query-api    {{ default .Values.global.imageTag .Values.queryApi.image.tag }}
+Roll one service back by re-pinning its <service>.image.tag, or everything with `helm rollback`.
 
 Check rollout:
   kubectl -n {{ .Release.Namespace }} get pods
   kubectl -n {{ .Release.Namespace }} logs -f deploy/{{ include "sentinelops.fullname" . }}-processor
 
 Send a test event:
-  curl -X POST http://{{ include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.ingest) }}:{{ .Values.gateway.nodePort }}/v1/events \
+  curl -X POST {{ .Values.gateway.scheme }}://{{ include "sentinelops.host" (dict "root" . "sub" .Values.gateway.hosts.ingest) }}:{{ .Values.gateway.nodePort }}/v1/events \
     -H "X-API-Key: <your key>" -H "Content-Type: application/json" \
     -d '{"events":[{"service":"demo","level":"error","status_code":503,"latency_ms":900,"message":"boom"}]}'
 {{- if .Values.elk.enabled }}

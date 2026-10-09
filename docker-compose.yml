@@ -44,3 +44,5 @@ services:
     depends_on: [ingest-api]
 volumes:
   pgdata:
+# NOTE: the credentials above ("sentinel", "dev-key") are for this local compose stack only.
+# The Helm chart refuses placeholder secrets - see docs/PRODUCTION_READINESS.md.

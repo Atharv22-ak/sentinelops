@@ -41,11 +41,13 @@ flowchart LR
 | `services/query_api` | REST API + single-page dashboard (events, services, incidents, time series) |
 | `services/loadgen` | Simulated microservice fleet with periodic injected faults (demo + testing) |
 | `services/common` | Shared config, JSON logging, Prometheus middleware, RabbitMQ topology, DB schema |
-| `deploy/helm/sentinelops` | Helm chart: apps, Postgres, Redis, RabbitMQ, HTTPRoutes (Gateway API), NetworkPolicies, PDBs, optional HPA, **optional ELK** |
-| `.github/workflows/ci.yml` | Lint + tests, `helm lint`/template/kubeconform (ELK on+off), multi-image build & push |
-| `tests/` | 31 unit tests (detector maths, models, API auth/rate-limit, notifier formats) |
-| `scripts/loadtest.py` | Throughput / latency load test for the ingest API |
-| `docs/` | Architecture decisions, runbook, resume & interview notes |
+| `deploy/` | Helm chart: apps, Postgres, Redis, RabbitMQ, HTTPRoutes (Gateway API), least-privilege NetworkPolicies, PDBs, HPA/KEDA, ExternalSecrets, ServiceMonitors/alerts/Grafana dashboard, **optional ELK** |
+| `argocd/` | Argo CD `Application` (GitOps deployment of `deploy/` + `values-cluster.yaml`) |
+| `.github/workflows/ci.yml` | Lint + tests, `helm lint`/template/kubeconform, Trivy (manifests + images), build -> scan -> push (Git SHA tag) -> bump `values-cluster.yaml` for Argo CD |
+| `tests/` | 37 unit tests (detector maths, models, API auth/rate-limit, notifier formats, load-test thresholds) |
+| `scripts/loadtest.py` | Load test for the ingest API: progressive stages, batch sizes, p50/p95/p99, pass/fail thresholds |
+| `scripts/chaos.sh` | Pod-delete / OOM / dependency-outage recovery tests (non-prod) |
+| `docs/` | Architecture decisions, runbook, **production readiness guide**, resume & interview notes |
 
 ## Quick start (local)
 
@@ -56,17 +58,27 @@ docker compose up --build        # dashboard http://localhost:8001  (loadgen inj
 
 ## Deploy on the Kubernetes cluster
 
+Images are tagged with the Git commit (immutable). The chart rejects `v1`/`latest` and refuses to render without real credentials
+- see [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md).
+
 ```bash
-# 1) build + push images (Docker Hub user is the REGISTRY)
-make build push REGISTRY=rwxatharv TAG=v1
+# 1) build + push images (tag defaults to the short Git SHA)
+make build push REGISTRY=rwxatharv
 
-# 2) deploy WITHOUT ELK
+# 2) credentials live outside Git: create the Secret once (or use External Secrets, see values.yaml)
 export PG_PASSWORD=$(openssl rand -hex 12) MQ_PASSWORD=$(openssl rand -hex 12) API_KEY=$(openssl rand -hex 16)
-make deploy TAG=v1
+make secret
 
-# 3) flip ELK on / off any time (data is kept in PVCs)
+# 3) deploy WITHOUT ELK
+make deploy SECRET_NAME=sentinelops-secrets
+
+# 4) flip ELK on / off any time (data is kept in PVCs)
 make elk-on        # = helm upgrade --reuse-values --set elk.enabled=true
 make elk-off
+
+# optional cluster add-ons
+make metrics-server   # kubectl top + CPU HPAs
+make monitoring-on    # ServiceMonitors, alerts, Grafana dashboard (needs kube-prometheus-stack)
 ```
 
 URLs (Envoy Gateway on the Elastic IP, NodePort 32136):

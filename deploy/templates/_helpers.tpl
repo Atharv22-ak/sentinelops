@@ -21,8 +21,44 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
 app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
+{{/*
+  Image reference for one service. Each service pins its own tag (<service>.image.tag); global.imageTag is only an
+  optional fallback. Tags must be immutable (Git SHA / release version) - mutable ones are rejected.
+  Call with: dict "root" . "name" <image name> "key" <values key, e.g. ingestApi> "cfg" <service values>
+*/}}
 {{- define "sentinelops.image" -}}
-{{ .root.Values.global.imageRegistry }}/sentinelops-{{ .name }}:{{ .root.Values.global.imageTag }}
+{{- $img := default dict .cfg.image -}}
+{{- $tag := default .root.Values.global.imageTag $img.tag -}}
+{{- if not $tag -}}
+{{- fail (printf "%s.image.tag is required (or set global.imageTag as a fallback) - use an immutable tag such as the Git SHA" .key) -}}
+{{- end -}}
+{{- if has $tag (list "latest" "v1" "dev" "stable") -}}
+{{- fail (printf "%s.image.tag=%q is a mutable tag; use the Git SHA or a release version" .key $tag) -}}
+{{- end -}}
+{{ .root.Values.global.imageRegistry }}/sentinelops-{{ .name }}:{{ $tag }}
+{{- end -}}
+
+{{/* imagePullSecrets block (empty when none configured). */}}
+{{- define "sentinelops.imagePullSecrets" -}}
+{{- with .Values.global.imagePullSecrets }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end -}}
+
+{{/* ServiceAccount name for a component; falls back to "default" when serviceAccount.create=false. */}}
+{{- define "sentinelops.serviceAccountName" -}}
+{{- if .root.Values.serviceAccount.create -}}
+{{ include "sentinelops.fullname" .root }}-{{ .component }}
+{{- else -}}
+default
+{{- end -}}
+{{- end -}}
+
+{{/* Is this workload's replica count owned by an autoscaler (HPA or KEDA)? */}}
+{{- define "sentinelops.autoscaled" -}}
+{{- $as := default dict .cfg.autoscaling -}}
+{{- if or $as.enabled (and (eq .component "processor") .root.Values.keda.enabled) -}}true{{- end -}}
 {{- end -}}
 
 {{- define "sentinelops.host" -}}
@@ -43,7 +79,7 @@ storageClassName: {{ .Values.global.storageClass | quote }}
 {{- define "sentinelops.workload" -}}
 {{- $root := .root -}}
 {{- $c := .cfg -}}
-{{- $as := default dict $c.autoscaling -}}
+{{- $scaled := include "sentinelops.autoscaled" (dict "root" .root "cfg" .cfg "component" .component) -}}
 {{- $full := include "sentinelops.fullname" $root -}}
 {{- $name := printf "%s-%s" $full .component -}}
 {{- $ctx := dict "root" $root "component" .component -}}
@@ -54,7 +90,7 @@ metadata:
   labels:
     {{- include "sentinelops.labels" $ctx | nindent 4 }}
 spec:
-  {{- if not $as.enabled }}
+  {{- if not $scaled }}
   replicas: {{ $c.replicas }}
   {{- end }}
   revisionHistoryLimit: 3
@@ -71,13 +107,15 @@ spec:
       labels:
         {{- include "sentinelops.labels" $ctx | nindent 8 }}
       annotations:
-        checksum/config: {{ include (print $root.Template.BasePath "/configmap.yaml") $root | sha256sum }}
-        checksum/secret: {{ include (print $root.Template.BasePath "/secret.yaml") $root | sha256sum }}
+        checksum/config: {{ include (print $root.Template.BasePath "/configmaps/app-config.yaml") $root | sha256sum }}
+        checksum/secret: {{ include (print $root.Template.BasePath "/secrets/secret.yaml") $root | sha256sum }}
         prometheus.io/scrape: "true"
         prometheus.io/port: "8000"
         prometheus.io/path: /metrics
     spec:
+      serviceAccountName: {{ include "sentinelops.serviceAccountName" (dict "root" $root "component" .component) }}
       automountServiceAccountToken: false
+      {{- include "sentinelops.imagePullSecrets" $root | nindent 6 }}
       terminationGracePeriodSeconds: 30
       securityContext:
         runAsNonRoot: true
@@ -93,7 +131,7 @@ spec:
               {{- include "sentinelops.selectorLabels" $ctx | nindent 14 }}
       containers:
         - name: app
-          image: {{ include "sentinelops.image" (dict "root" $root "name" .image) }}
+          image: {{ include "sentinelops.image" (dict "root" $root "name" .image "key" .key "cfg" $c) }}
           imagePullPolicy: {{ $root.Values.global.imagePullPolicy }}
           ports:
             - name: http
@@ -114,15 +152,22 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+          # startupProbe gives slow dependency connects (apps retry RabbitMQ/Postgres for ~2 min) room without
+          # making liveness aggressive. Readiness reflects real dependency state (/readyz checks Redis/RabbitMQ/Postgres).
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+            failureThreshold: 36
           readinessProbe:
             httpGet: {path: /readyz, port: http}
-            initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 5
             failureThreshold: 6
           livenessProbe:
             httpGet: {path: /healthz, port: http}
-            initialDelaySeconds: 20
             periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
           resources:
             {{- toYaml $c.resources | nindent 12 }}
           securityContext:
