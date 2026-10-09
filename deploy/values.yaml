@@ -206,7 +206,7 @@ monitoring:
 
 # --- Optional ELK stack: centralised, structured log search ---------------------
 elk:
-  enabled: true                  # <-- helm upgrade --set elk.enabled=true
+  enabled: false                  # <-- helm upgrade --set elk.enabled=true
   version: "8.13.4"
   retentionDays: 3
   elasticsearch:
