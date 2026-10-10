@@ -110,4 +110,118 @@ spec:
           volumes:
             - name: tmp
               emptyDir: {}
+{{- if $r.runOnHelm }}
+---
+{{- /*
+  Helm hook: creates/refreshes the pull secret BEFORE the pods are created on every `helm install` / `helm upgrade`,
+  so no manual `make ecr-secret` is needed. Uses its own short-lived ServiceAccount/Role (hooks run before regular
+  resources exist). The CronJob above keeps the token fresh between upgrades.
+*/ -}}
+{{- $hook := printf "%s-ecr-init" $full }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $hook }}
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $hook }}
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $hook }}
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-9"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+subjects:
+  - kind: ServiceAccount
+    name: {{ $hook }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $hook }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $hook }}
+  labels:
+    {{- include "sentinelops.labels" $ctx | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "sentinelops.labels" $ctx | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ $hook }}
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: init
+          image: {{ $r.image }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              TOKEN="$(aws ecr get-login-password --region "$AWS_REGION")"
+              kubectl create secret docker-registry "$SECRET_NAME" \
+                --docker-server="$REGISTRY" --docker-username=AWS --docker-password="$TOKEN" \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "created/refreshed $SECRET_NAME for $REGISTRY"
+          env:
+            - {name: AWS_REGION, value: {{ $r.region | quote }}}
+            - {name: AWS_DEFAULT_REGION, value: {{ $r.region | quote }}}
+            - {name: SECRET_NAME, value: {{ $r.secretName | quote }}}
+            - {name: REGISTRY, value: {{ $registry | quote }}}
+            - {name: HOME, value: /tmp}
+          {{- with $r.awsCredentialsSecret }}
+          envFrom:
+            - secretRef: {name: {{ . | quote }}}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 10m, memory: 64Mi}
+            limits: {cpu: 200m, memory: 192Mi}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}
 {{- end }}

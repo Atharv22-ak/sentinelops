@@ -8,14 +8,15 @@ global:
   imageTag: "dev-01"                    # optional FALLBACK for services that do not set their own <service>.image.tag below.
                                   # Tags must be immutable (Git SHA / release version); v1/latest are rejected.
   imagePullPolicy: IfNotPresent
-  imagePullSecrets: []            # private registry, e.g. [{name: regcred}]. Not needed with node IAM roles (ECR) / workload identity.
+  imagePullSecrets: [{name: regcred}]   # private registry. Must be a LIST of {name: ...}. Not needed with node IAM roles (ECR) / workload identity.
   storageClass: ""                # "" => cluster default (local-path on this cluster)
 # --- ECR pull secret for a self-managed (kubeadm) cluster --------------------------------------------
 # ECR tokens last 12h. When enabled, a CronJob keeps the `secretName` docker-registry Secret fresh and every pod
 # automatically uses it as imagePullSecrets. Create the first Secret with:  make ecr-secret
 ecr:
   refresh:
-    enabled: false
+    enabled: true
+    runOnHelm: true               # also create/refresh the secret via a pre-install/pre-upgrade hook (no manual `make ecr-secret`)
     region: ap-south-1
     registry: "116261338703.dkr.ecr.ap-south-1.amazonaws.com"                  # default: host part of global.imageRegistry
     secretName: regcred
@@ -52,8 +53,8 @@ gateway:
 secrets:
   existingSecret: ""              # must contain: POSTGRES_PASSWORD, POSTGRES_DSN, AMQP_URL, RABBITMQ_DEFAULT_PASS,
                                   # API_KEYS, INGEST_API_KEY, WEBHOOK_URL
-  postgresPassword: "Atharv@123"            # URL-safe characters only (used inside a DSN)
-  rabbitmqPassword: "Rabbit@123"           # URL-safe characters only
+  postgresPassword: "Atharv@123"            # special chars are URL-encoded in the DSN automatically
+  rabbitmqPassword: "Rabbit@123"           # special chars are URL-encoded automatically
   apiKeys: "a31752b28c4291221c358b0d12255c5a9bd3c897fe0a39060c46225125bc0ffa"                     # comma separated list of accepted X-API-Key values (first one is used by loadgen)
   webhookUrl: ""                  # Teams / Slack / generic webhook; empty = alerts only stored
   externalSecret:
@@ -110,7 +111,7 @@ keda:
 # --- Application services -----------------------------------------------------
 # HPA: start CPU-based, then tune thresholds from `make loadtest-ramp` results. min/max keep the shared 3x t3.medium cluster safe.
 ingestApi:
-  image: {tag: "dev-01"}                 # own immutable tag for this service (falls back to global.imageTag)
+  image: {tag: "d11de885eed7"}                 # own immutable tag for this service (falls back to global.imageTag)
   replicas: 1                     # ignored while autoscaling is enabled
   autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 4, targetCPUUtilizationPercentage: 70, targetMemoryUtilizationPercentage: 0}
   resources:
@@ -118,7 +119,7 @@ ingestApi:
     limits: {cpu: 500m, memory: 256Mi}
 
 processor:
-  image: {tag: "dev-01"}                 # own immutable tag for this service (falls back to global.imageTag)
+  image: {tag: "d11de885eed7"}                 # own immutable tag for this service (falls back to global.imageTag)
   replicas: 1
   autoscaling: {enabled: true, minReplicas: 1, maxReplicas: 4, targetCPUUtilizationPercentage: 70, targetMemoryUtilizationPercentage: 0}
   # 256Mi was deliberately OOM-tested (exit 137 -> container restarted). Re-size from real measurements, see docs/RUNBOOK.md ("OOMKilled").
@@ -127,14 +128,14 @@ processor:
     limits: {cpu: 500m, memory: 256Mi}
 
 alertService:
-  image: {tag: "dev-01"}                 # own immutable tag for this service (falls back to global.imageTag)
+  image: {tag: "d11de885eed7"}                 # own immutable tag for this service (falls back to global.imageTag)
   replicas: 1
   resources:
     requests: {cpu: 25m, memory: 80Mi}
     limits: {cpu: 250m, memory: 192Mi}
 
 queryApi:
-  image: {tag: "dev-01"}                 # own immutable tag for this service (falls back to global.imageTag)
+  image: {tag: "d11de885eed7"}                 # own immutable tag for this service (falls back to global.imageTag)
   replicas: 1
   autoscaling: {enabled: false, minReplicas: 1, maxReplicas: 3, targetCPUUtilizationPercentage: 70, targetMemoryUtilizationPercentage: 0}
   resources:
@@ -143,7 +144,7 @@ queryApi:
 
 loadgen:                          # demo traffic + injected faults; disable in "real" use
   enabled: false
-  image: {tag: "dev-01"}                 # own immutable tag for this service
+  image: {tag: "d11de885eed7"}                 # own immutable tag for this service
   replicas: 1
   env:
     EVENTS_PER_SECOND: "20"

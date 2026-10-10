@@ -48,6 +48,7 @@ app.kubernetes.io/component: {{ .component }}
 {{/* imagePullSecrets block (empty when none configured). */}}
 {{- define "sentinelops.imagePullSecrets" -}}
 {{- $secrets := .Values.global.imagePullSecrets -}}
+{{- if kindIs "string" $secrets -}}{{- $secrets = ternary (list (dict "name" $secrets)) (list) (ne $secrets "") -}}{{- end -}}
 {{- if and (not $secrets) .Values.ecr.refresh.enabled -}}
 {{- $secrets = list (dict "name" .Values.ecr.refresh.secretName) -}}
 {{- end -}}
